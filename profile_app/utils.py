@@ -1,15 +1,20 @@
 import requests
+from requests.exceptions import RequestException, Timeout
 
 
-def fetch_cat_fact():
+def fetch_cat_fact(timeout: float = 5.0):
     url = "https://catfact.ninja/fact"
-    fallback_fact = "Cats sleep for about 70% of their lives."
+
     try:
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("fact", fallback_fact)
-        else:
-            return fallback_fact
-    except requests.RequestException:
-        return fallback_fact
+        resp = requests.get(url, timeout=timeout)
+    except Timeout:
+        return ("Cat Facts API request timed out.", 504)
+    except RequestException:
+        return ("Unable to reach Cat Facts API.", 503)
+
+    if resp.status_code != 200:
+        return (resp.text, resp.status_code)
+
+    data = resp.json()
+    fact = data.get("fact")
+    return (fact, resp.status_code)
