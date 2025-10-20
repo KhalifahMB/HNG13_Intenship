@@ -27,21 +27,20 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
-    'django.contrib.staticfiles',
+    "whitenoise.runserver_nostatic",
+    "django.contrib.staticfiles",
+
+    # Local
+    'profile_app',
+    "String_Analyser",
 
     # Third-party
     'rest_framework',
     'corsheaders',
-    "whitenoise",
-    # Local
-    'profile_app',
 ]
 
 
-CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True') == 'True'
-if not CORS_ALLOW_ALL_ORIGINS:
-    CORS_ALLOWED_ORIGINS = os.getenv(
-        'CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS').split(",")
 
 CORS_ALLOW_HEADERS = [
     'Accept',
@@ -51,8 +50,8 @@ CORS_ALLOW_HEADERS = [
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
-    "whitenoise.middleware.WhiteNoiseMiddleware",
     'django.middleware.security.SecurityMiddleware',
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -83,13 +82,7 @@ WSGI_APPLICATION = 'hng13.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-if DEBUG == False:
-    DATABASES = {
-        'default': dj_database_url.config(
-
-        ),
-    }
-else:
+if DEBUG == True:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -99,19 +92,35 @@ else:
             "HOST": "localhost",
             "PORT": 5432,
         }}
+else:
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=os.getenv("DATABASE_URL"),
+            conn_max_age=600
+        ),
+    }
 
+# DATABASES = {
+#     'default': dj_database_url.config(
+#         default=os.getenv("DATABASE_URL"),
+#         conn_max_age=600
+#     ), }
+
+print(DEBUG)
+print(DATABASES)
 
 # Static files
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Whitenoise for Heroku static serving
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Django REST Framework basic config
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
     ]
 }
 
