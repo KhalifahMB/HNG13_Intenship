@@ -37,6 +37,8 @@ INSTALLED_APPS = [
     # Third-party
     'rest_framework',
     'corsheaders',
+    "drf_yasg",
+    'django_filters',
 ]
 
 
@@ -82,7 +84,7 @@ WSGI_APPLICATION = 'hng13.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-if DEBUG == True:
+if DEBUG == "True":
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -100,14 +102,6 @@ else:
         ),
     }
 
-# DATABASES = {
-#     'default': dj_database_url.config(
-#         default=os.getenv("DATABASE_URL"),
-#         conn_max_age=600
-#     ), }
-
-print(DEBUG)
-print(DATABASES)
 
 # Static files
 STATIC_URL = '/static/'
@@ -121,6 +115,11 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.OrderingFilter',
+        'rest_framework.filters.SearchFilter',
     ]
 }
 

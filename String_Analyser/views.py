@@ -1,16 +1,31 @@
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status, serializers, generics
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from django.db.models import Q
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
 import re
 from .models import StringRecord
 from .serializers import StringAnalyzeSerializer, StringRecordSerializer
 from .utils import analyze_string
+from .filters import StringRecordFilter
 
-# 1️⃣ POST /strings
-class StringAnalyzerView(APIView):
+# 1️⃣ POST & GET /strings
+
+
+class StringAnalyzerView(generics.ListAPIView, APIView):
+    queryset = StringRecord.objects.all().order_by('-created_at')
+    serializer_class = StringRecordSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = StringRecordFilter
+
+    @swagger_auto_schema(
+        request_body=StringAnalyzeSerializer,
+        operation_summary="Analyze and store a new string",
+    )
     def post(self, request):
         serializer = StringAnalyzeSerializer(data=request.data)
         if not serializer.is_valid():
@@ -24,108 +39,68 @@ class StringAnalyzerView(APIView):
         except serializers.ValidationError as e:
             return Response({"error": str(e.detail)}, status=status.HTTP_409_CONFLICT)
 
-        response_data = StringRecordSerializer(record).data
-        response_data['id'] = record.sha256_hash
-        response_data['created_at'] = record.created_at.isoformat()
+        # Serializer now returns the desired representation
+        return Response(StringRecordSerializer(record).data, status=status.HTTP_201_CREATED)
 
-        return Response(response_data, status=status.HTTP_201_CREATED)
+    @swagger_auto_schema(
+        operation_summary="List all analyzed strings",
+        manual_parameters=[
+            openapi.Parameter(
+                "is_palindrome",
+                openapi.IN_QUERY,
+                description="Filter by palindrome (true/false)",
+                type=openapi.TYPE_BOOLEAN,
+            ),
+            openapi.Parameter(
+                "min_length",
+                openapi.IN_QUERY,
+                description="Minimum string length",
+                type=openapi.TYPE_INTEGER,
+            ),
+            openapi.Parameter(
+                "max_length",
+                openapi.IN_QUERY,
+                description="Maximum string length",
+                type=openapi.TYPE_INTEGER,
+            ),
+            openapi.Parameter(
+                "word_count",
+                openapi.IN_QUERY,
+                description="Exact word count",
+                type=openapi.TYPE_INTEGER,
+            ),
+            openapi.Parameter(
+                "contains_character",
+                openapi.IN_QUERY,
+                description="Filter strings that contain this character",
+                type=openapi.TYPE_STRING,
+            ),
+        ],
 
-# 2️⃣ GET /strings/{string_value}
+    )
+    def get(self, request, *args, **kwargs):
+        filtered_queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(filtered_queryset, many=True)
+
+        return Response({
+            "data": serializer.data,
+            "count": filtered_queryset.count(),
+            "filters_applied": request.query_params.dict(),
+        }, status=status.HTTP_200_OK)
+
+# 2️⃣ GET &  DELETE  /strings/{string_value}
+
+
 class StringDetailView(APIView):
+
     def get(self, request, value):
         try:
             record = StringRecord.objects.get(value=value)
         except StringRecord.DoesNotExist:
             return Response({"error": "String not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        data = StringRecordSerializer(record).data
-        data['id'] = record.sha256_hash
-        data['created_at'] = record.created_at.isoformat()
+        return Response(StringRecordSerializer(record).data, status=status.HTTP_200_OK)
 
-        return Response(data, status=status.HTTP_200_OK)
-
-# 3️⃣ GET /strings (with filters)
-class StringListView(APIView):
-    def get(self, request):
-        params = request.query_params
-        filters = Q()
-        filters_applied = {}
-
-        #  Filter: is_palindrome
-        if 'is_palindrome' in params:
-            val = params.get('is_palindrome', '').lower()
-            if val in ('true', 'false'):
-                filters &= Q(is_palindrome=(val == 'true'))
-                filters_applied['is_palindrome'] = (val == 'true')
-            else:
-                return Response(
-                    {"error": "Invalid value for is_palindrome (must be 'true' or 'false')"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        #  Filter: min_length
-        if 'min_length' in params:
-            try:
-                val = int(params['min_length'])
-                filters &= Q(length__gte=val)
-                filters_applied['min_length'] = val
-            except ValueError:
-                return Response(
-                    {"error": "min_length must be an integer."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        #  Filter: max_length
-        if 'max_length' in params:
-            try:
-                val = int(params['max_length'])
-                filters &= Q(length__lte=val)
-                filters_applied['max_length'] = val
-            except ValueError:
-                return Response(
-                    {"error": "max_length must be an integer."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        #  Filter: word_count
-        if 'word_count' in params:
-            try:
-                val = int(params['word_count'])
-                filters &= Q(word_count=val)
-                filters_applied['word_count'] = val
-            except ValueError:
-                return Response(
-                    {"error": "word_count must be an integer."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        #  Filter: contains_character
-        if 'contains_character' in params:
-            ch = params.get('contains_character')
-            if ch and len(ch) == 1:
-                filters &= Q(value__icontains=ch)
-                filters_applied['contains_character'] = ch
-            else:
-                return Response(
-                    {"error": "contains_character must be a single character."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        # ✅ Apply all filters (if none provided, returns all)
-        queryset = StringRecord.objects.filter(filters).order_by('-created_at')
-
-        # Serialize the data
-        serializer = StringRecordSerializer(queryset, many=True)
-
-        # ✅ Return structured response
-        return Response({
-            "data": serializer.data,
-            "count": queryset.count(),
-            "filters_applied": filters_applied
-        }, status=status.HTTP_200_OK)
-
-# 4️⃣ DELETE /strings/{string_value}
-class StringDeleteView(APIView):
     def delete(self, request, value):
         try:
             record = StringRecord.objects.get(value=value)
@@ -134,28 +109,50 @@ class StringDeleteView(APIView):
         record.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-class NaturalLanguageFilterView(APIView):
-    def get(self, request):
-        query = request.query_params.get('query', '')
-        if not query:
-            return Response({"error": "Query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        parsed_filters = {}
+# 4️⃣ GET /strings/filter-by-natural-language
+
+class NaturalLanguageFilterView(APIView):
+    @swagger_auto_schema(
+        operation_summary="Filter analyzed strings using natural language queries",
+        manual_parameters=[
+            openapi.Parameter(
+                "query",
+                openapi.IN_QUERY,
+                description="Natural language query, e.g. 'all single word palindromic strings'",
+                type=openapi.TYPE_STRING,
+                required=True,
+            )
+        ],
+    )
+    def get(self, request):
+        query = request.query_params.get("query", "")
+        if not query:
+            return Response(
+                {"error": "Query parameter is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         query_lower = query.lower()
- 
-        # Rule 1: Palindrome detection
+        parsed_filters = {}
+
+        # ✅ Rule 1: Detect palindrome-related queries
         if "palindromic" in query_lower or "palindrome" in query_lower:
             parsed_filters["is_palindrome"] = True
 
-        # Rule 2: Single word or multi-word
+        # ✅ Rule 2: Detect number of words
         if "single word" in query_lower:
             parsed_filters["word_count"] = 1
         elif "two words" in query_lower:
             parsed_filters["word_count"] = 2
         elif "three words" in query_lower:
             parsed_filters["word_count"] = 3
+        elif "word count of" in query_lower:
+            match = re.search(r"word count of (\d+)", query_lower)
+            if match:
+                parsed_filters["word_count"] = int(match.group(1))
 
-        # Rule 3: Longer/shorter than N characters
+        # ✅ Rule 3: Handle "longer than" and "shorter than"
         match_longer = re.search(r"longer than (\d+)", query_lower)
         match_shorter = re.search(r"shorter than (\d+)", query_lower)
         if match_longer:
@@ -163,33 +160,53 @@ class NaturalLanguageFilterView(APIView):
         if match_shorter:
             parsed_filters["max_length"] = int(match_shorter.group(1)) - 1
 
-        # Rule 4: Contains character
+        # ✅ Rule 4: Handle "containing the letter X"
         match_contains = re.search(r"contain(?:ing)? the letter (\w)", query_lower)
         if match_contains:
             parsed_filters["contains_character"] = match_contains.group(1)
 
-        # If no patterns matched
+        # ✅ Rule 5: Handle heuristic for “first vowel” phrase
+        if "first vowel" in query_lower:
+            parsed_filters["contains_character"] = "a"
+
+        # ✅ If no valid patterns matched
         if not parsed_filters:
             return Response({
-                "error": "Unable to parse natural language query",
-                "interpreted_query": {"original": query_lower, "parsed_filters": parsed_filters}
+                "error": "Unable to parse natural language query.",
+                "interpreted_query": {
+                    "original": query,
+                    "parsed_filters": parsed_filters
+                }
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Build filters dynamically
-        from django.db.models import Q
+        # ✅ Detect conflicting filters (e.g. min_length > max_length)
+        if (
+            "min_length" in parsed_filters
+            and "max_length" in parsed_filters
+            and parsed_filters["min_length"] > parsed_filters["max_length"]
+        ):
+            return Response({
+                "error": "Conflicting filters detected: min_length cannot be greater than max_length.",
+                "interpreted_query": {
+                    "original": query,
+                    "parsed_filters": parsed_filters
+                }
+            }, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+        # ✅ Build QuerySet filters dynamically
         filters = Q()
-        if "is_palindrome" in parsed_filters:
+        if parsed_filters.get("is_palindrome"):
             filters &= Q(is_palindrome=True)
-        if "word_count" in parsed_filters:
+        if parsed_filters.get("word_count") is not None:
             filters &= Q(word_count=parsed_filters["word_count"])
-        if "min_length" in parsed_filters:
+        if parsed_filters.get("min_length") is not None:
             filters &= Q(length__gte=parsed_filters["min_length"])
-        if "max_length" in parsed_filters:
+        if parsed_filters.get("max_length") is not None:
             filters &= Q(length__lte=parsed_filters["max_length"])
-        if "contains_character" in parsed_filters:
+        if parsed_filters.get("contains_character"):
             filters &= Q(value__icontains=parsed_filters["contains_character"])
 
-        # Apply filters
+        # ✅ Query the database
         strings = StringRecord.objects.filter(filters)
         serialized = StringRecordSerializer(strings, many=True)
 
