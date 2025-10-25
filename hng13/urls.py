@@ -6,7 +6,7 @@ from drf_yasg import openapi
 
 schema_view = get_schema_view(
     openapi.Info(
-        title="HNG13 Intenship",
+        title="HNG13 Internship - Backend APIs",
         default_version='v1',
     ),
     public=True,
@@ -18,6 +18,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('profile_app.urls')),
     path('', include('String_Analyser.urls')),
+    path('', include('countries_api.urls')),
     path('swagger/', schema_view.with_ui('swagger',
          cache_timeout=0), name='schema-swagger-ui'),
     path('redoc/', schema_view.with_ui('redoc',

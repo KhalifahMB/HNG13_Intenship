@@ -1,6 +1,40 @@
-**Author:** Muhammad Ahmad El-kufahn  
-**Email:** muhammadelkufahn27@gmail.com  
+**Author:** Muhammad Ahmad El-kufahn
+**Email:** muhammadelkufahn27@gmail.com
 **Stack:** Python / Django / DRF
+
+---
+
+# 🌍 Country Currency & Exchange API
+
+A RESTful API that fetches country data from external APIs, stores it in a database, and provides CRUD operations with exchange rate information and GDP calculations.
+
+## 🚀 Features
+
+✅ Fetch country data from REST Countries API
+✅ Fetch real-time exchange rates
+✅ Calculate estimated GDP for each country
+✅ Filter by region and currency
+✅ Sort by GDP, population, or name
+✅ Generate summary images with statistics
+✅ Full Swagger/OpenAPI documentation
+
+## 📋 Endpoints
+
+- `POST /countries/refresh` → Fetch and cache all countries with exchange rates
+- `GET /countries` → Get all countries (supports filters: `?region=Africa&currency=NGN&sort=gdp_desc`)
+- `GET /countries/:name` → Get one country by name
+- `DELETE /countries/:name/delete` → Delete a country record
+- `GET /status` → Show total countries and last refresh timestamp
+- `GET /countries/image` → Serve summary image with top 5 countries by GDP
+
+## 📖 Documentation
+
+- **Swagger UI:** http://127.0.0.1:8000/swagger/
+- **ReDoc:** http://127.0.0.1:8000/redoc/
+- **Detailed API Docs:** [countries_api/README.md](countries_api/README.md)
+
+---
+
 # 🧩 Backend Wizards — Stage 1: String Analyzer API
 
 A RESTful API built with **Python (Django + DRF)** that analyzes strings, stores their computed properties, and supports natural language filtering.
@@ -10,19 +44,19 @@ A RESTful API built with **Python (Django + DRF)** that analyzes strings, stores
 ## 🚀 Features
 
 ✅ Analyze strings and compute:
-- Length  
-- Palindrome check  
-- Unique characters  
-- Word count  
-- SHA-256 hash  
-- Character frequency map  
+- Length
+- Palindrome check
+- Unique characters
+- Word count
+- SHA-256 hash
+- Character frequency map
 
 ✅ Endpoints:
-- `POST /string` → Analyze and store a string  
-- `GET /strings/<value>` → Retrieve details of a string  
-- `GET /strings/` → List all strings with optional filters  
-- `GET /strings/filter-by-natural-language?query=<phrase>` → Query using natural language  
-- `DELETE /string/<value>/delete` → Delete a stored string  
+- `POST /string` → Analyze and store a string
+- `GET /strings/<value>` → Retrieve details of a string
+- `GET /strings/` → List all strings with optional filters
+- `GET /strings/filter-by-natural-language?query=<phrase>` → Query using natural language
+- `DELETE /string/<value>/delete` → Delete a stored string
 
 ---
 
@@ -132,3 +166,22 @@ Visit http://127.0.0.1:8000/me/
 Notes:
 
 -  For production, never set `DEBUG=True` and never use `ALLOWED_HOSTS='*'` without proper precautions.
+
+---
+
+
+---
+
+## 📦 Installed Apps
+
+- **profile_app** - Profile and /me endpoint
+- **String_Analyser** - String analysis API
+- **countries_api** - Country currency & exchange API (NEW)
+
+---
+
+## 🔗 API Documentation
+
+All endpoints are documented with Swagger/OpenAPI:
+- **Swagger UI:** http://127.0.0.1:8000/swagger/
+- **ReDoc:** http://127.0.0.1:8000/redoc/

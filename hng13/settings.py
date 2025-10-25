@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     # Local
     'profile_app',
     "String_Analyser",
+    'countries_api',
 
     # Third-party
     'rest_framework',
@@ -107,8 +108,8 @@ else:
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# Whitenoise for Heroku static serving
-# STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# Whitenoise for static serving
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Django REST Framework basic config
 REST_FRAMEWORK = {
