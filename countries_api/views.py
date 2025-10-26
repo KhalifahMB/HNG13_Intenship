@@ -188,7 +188,7 @@ def refresh_countries(request):
         return Response({
             'message': 'Refresh started',
             'started_at': started_at.strftime('%Y-%m-%dT%H:%M:%SZ')
-        }, status=status.HTTP_202_ACCEPTED)
+        }, status=status.HTTP_200_OK)
 
     except ExternalAPIError as e:
         return Response({
