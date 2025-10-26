@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from django.db.models import Q
 from django.utils import timezone
 from django.http import FileResponse, Http404
+import threading
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from decimal import Decimal
@@ -42,87 +43,153 @@ def refresh_countries(request):
     POST /countries/refresh
     Fetch all countries and exchange rates, then cache them in the database
     """
+    # Start background refresh task and return immediately (202 Accepted)
     try:
-        # Fetch data from external APIs
-        countries_data = fetch_countries_data()
-        exchange_rates = fetch_exchange_rates()
+        started_at = timezone.now()
+        print("started time", started_at)
 
-        refresh_timestamp = timezone.now()
-        countries_updated = 0
-
-        # Process each country
-        for country_data in countries_data:
-            name = country_data.get('name', '').strip()
-            if not name:
-                continue
-
-            capital = country_data.get('capital', None)
-            region = country_data.get('region', None)
-            population = country_data.get('population', 0)
-            flag_url = country_data.get('flag', None)
-            currencies = country_data.get('currencies', [])
-
-            # Extract currency code
-            currency_code = extract_currency_code(currencies)
-
-            # Get exchange rate
-            exchange_rate = None
-            estimated_gdp = None
-
-            if currency_code:
-                exchange_rate = exchange_rates.get(currency_code, None)
-                if exchange_rate is not None:
-                    exchange_rate = Decimal(str(exchange_rate))
-                    estimated_gdp = calculate_estimated_gdp(population, exchange_rate)
-                else:
-                    # Currency code not found in exchange rates
-                    exchange_rate = None
-                    estimated_gdp = None
-            else:
-                # No currency code
-                estimated_gdp = Decimal('0')
-
-            # Update or create country record
-            country, created = Country.objects.update_or_create(
-                name__iexact=name,
-                defaults={
-                    'name': name,
-                    'capital': capital,
-                    'region': region,
-                    'population': population,
-                    'currency_code': currency_code,
-                    'exchange_rate': exchange_rate,
-                    'estimated_gdp': estimated_gdp,
-                    'flag_url': flag_url,
-                    'last_refreshed_at': refresh_timestamp
-                }
-            )
-            countries_updated += 1
-
-        # Update refresh metadata
-        total_countries = Country.objects.count()
+        # create a metadata entry indicating refresh started
         RefreshMetadata.objects.create(
-            total_countries=total_countries,
-            last_refreshed_at=refresh_timestamp,
-            refresh_status='success'
+            total_countries=Country.objects.count(),
+            last_refreshed_at=started_at,
+            refresh_status='in_progress'
         )
 
-        # Generate summary image
-        top_5_countries = Country.objects.filter(
-            estimated_gdp__isnull=False
-        ).order_by('-estimated_gdp')[:5].values('name', 'estimated_gdp')
+        def chunks(iterable, size=100):
+            for i in range(0, len(iterable), size):
+                yield iterable[i:i + size]
 
-        generate_summary_image(
-            total_countries=total_countries,
-            top_5_countries=list(top_5_countries),
-            timestamp=refresh_timestamp
-        )
+        def perform_refresh(timestamp):
+            try:
+                # fetch external data inside background worker so main request never blocks on external APIs
+                try:
+                    data = fetch_countries_data()
+                    print("fetching countries", data)
+                    rates = fetch_exchange_rates()
+                    print("fetching exchange rates", rates)
+                except ExternalAPIError:
+                    # Record failure metadata and exit
+                    RefreshMetadata.objects.create(
+                        total_countries=Country.objects.count(),
+                        last_refreshed_at=timezone.now(),
+                        refresh_status='failed'
+                    )
+                    return
+
+                batch_size = 100
+
+                # Build a lookup of existing countries by lowercased name
+                existing_qs = Country.objects.all()
+                existing_map = {c.name.lower(): c for c in existing_qs}
+
+                to_create = []
+                to_update = []
+
+                for chunk in chunks(data, batch_size):
+                    to_create.clear()
+                    to_update.clear()
+
+                    for country_data in chunk:
+                        name = (country_data.get('name') or '').strip()
+                        if not name:
+                            continue
+
+                        capital = country_data.get('capital', None)
+                        region = country_data.get('region', None)
+                        population = country_data.get('population', 0)
+                        flag_url = country_data.get('flag', None)
+                        currencies = country_data.get('currencies', [])
+
+                        currency_code = extract_currency_code(currencies)
+
+                        exchange_rate = None
+                        estimated_gdp = None
+
+                        if currency_code:
+                            rate_val = rates.get(currency_code) or rates.get(currency_code.upper())
+                            if rate_val is not None:
+                                try:
+                                    exchange_rate = float(rate_val)
+                                except Exception:
+                                    exchange_rate = None
+                                estimated_gdp = calculate_estimated_gdp(population, exchange_rate)
+
+                        # prepare instance
+                        key = name.lower()
+                        if key in existing_map:
+                            inst = existing_map[key]
+                            inst.capital = capital
+                            inst.region = region
+                            inst.population = population or 0
+                            inst.currency_code = currency_code
+                            inst.exchange_rate = exchange_rate
+                            inst.estimated_gdp = estimated_gdp
+                            inst.flag_url = flag_url
+                            inst.last_refreshed_at = timestamp
+                            to_update.append(inst)
+                        else:
+                            inst = Country(
+                                name=name,
+                                capital=capital,
+                                region=region,
+                                population=population or 0,
+                                currency_code=currency_code,
+                                exchange_rate=exchange_rate,
+                                estimated_gdp=estimated_gdp,
+                                flag_url=flag_url,
+                                last_refreshed_at=timestamp
+                            )
+                            to_create.append(inst)
+
+                    # Bulk create and bulk update for this chunk
+                    if to_create:
+                        Country.objects.bulk_create(to_create, batch_size=len(to_create))
+                        # add newly created instances to existing_map so later chunks can update them if needed
+                        for c in to_create:
+                            existing_map[c.name.lower()] = c
+
+                    if to_update:
+                        Country.objects.bulk_update(
+                            to_update,
+                            ['capital', 'region', 'population', 'currency_code', 'exchange_rate', 'estimated_gdp', 'flag_url', 'last_refreshed_at'],
+                            batch_size=len(to_update)
+                        )
+
+                # Mark refresh success
+                total_countries = Country.objects.count()
+                RefreshMetadata.objects.create(
+                    total_countries=total_countries,
+                    last_refreshed_at=timestamp,
+                    refresh_status='success'
+                )
+
+                # Generate summary image
+                top_5_countries = Country.objects.filter(
+                    estimated_gdp__isnull=False
+                ).order_by('-estimated_gdp')[:5].values('name', 'estimated_gdp')
+
+                generate_summary_image(
+                    total_countries=total_countries,
+                    top_5_countries=list(top_5_countries),
+                    timestamp=timestamp
+                )
+
+            except Exception as exc:
+                # record failure
+                RefreshMetadata.objects.create(
+                    total_countries=Country.objects.count(),
+                    last_refreshed_at=timezone.now(),
+                    refresh_status='failed'
+                )
+
+        # Start background thread
+        thread = threading.Thread(target=perform_refresh, args=(started_at,), daemon=True)
+        thread.start()
 
         return Response({
-            'message': f'Successfully refreshed {countries_updated} countries',
-            'total_countries': total_countries,
-            'refreshed_at': refresh_timestamp
-        }, status=status.HTTP_200_OK)
+            'message': 'Refresh started',
+            'started_at': started_at.strftime('%Y-%m-%dT%H:%M:%SZ')
+        }, status=status.HTTP_202_ACCEPTED)
 
     except ExternalAPIError as e:
         return Response({
@@ -188,9 +255,9 @@ def get_countries(request):
         sort_param = request.query_params.get('sort', None)
         if sort_param:
             if sort_param == 'gdp_desc':
-                queryset = queryset.order_by('-estimated_gdp')
+                queryset = queryset.exclude(estimated_gdp__isnull=True).order_by('-estimated_gdp')
             elif sort_param == 'gdp_asc':
-                queryset = queryset.order_by('estimated_gdp')
+                queryset = queryset.exclude(estimated_gdp__isnull=True).order_by('estimated_gdp')
             elif sort_param == 'population_desc':
                 queryset = queryset.order_by('-population')
             elif sort_param == 'population_asc':
@@ -244,7 +311,7 @@ def get_country_by_name(request, name):
     method='delete',
     operation_description='Delete a country record by name',
     responses={
-        200: openapi.Response(
+        204: openapi.Response(
             description='Country deleted successfully',
             schema=openapi.Schema(
                 type=openapi.TYPE_OBJECT,
@@ -257,19 +324,32 @@ def get_country_by_name(request, name):
     },
     tags=['Countries']
 )
-@api_view(['DELETE'])
+@api_view(['GET', 'DELETE'])
 def delete_country(request, name):
     """
     DELETE /countries/:name
     Delete a country record
     """
+    if request.method == 'GET':
+        try:
+            country = Country.objects.get(name__iexact=name)
+            serializer = CountrySerializer(country)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Country.DoesNotExist:
+            return Response({
+                'error': 'Country not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': 'Internal server error',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # DELETE
     try:
         country = Country.objects.get(name__iexact=name)
-        country_name = country.name
         country.delete()
-        return Response({
-            'message': f'Country "{country_name}" deleted successfully'
-        }, status=status.HTTP_200_OK)
+        return Response(status=status.HTTP_204_NO_CONTENT)
     except Country.DoesNotExist:
         return Response({
             'error': 'Country not found'
@@ -302,7 +382,7 @@ def get_status(request):
         # Get last refresh metadata
         try:
             last_refresh = RefreshMetadata.objects.latest('last_refreshed_at')
-            last_refreshed_at = last_refresh.last_refreshed_at
+            last_refreshed_at = last_refresh.last_refreshed_at.strftime('%Y-%m-%dT%H:%M:%SZ')
         except RefreshMetadata.DoesNotExist:
             last_refreshed_at = None
 

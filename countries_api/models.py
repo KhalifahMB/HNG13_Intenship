@@ -11,18 +11,8 @@ class Country(models.Model):
     region = models.CharField(max_length=100, null=True, blank=True, db_index=True)
     population = models.BigIntegerField()
     currency_code = models.CharField(max_length=10, null=True, blank=True, db_index=True)
-    exchange_rate = models.DecimalField(
-        max_digits=20,
-        decimal_places=6,
-        null=True,
-        blank=True
-    )
-    estimated_gdp = models.DecimalField(
-        max_digits=30,
-        decimal_places=2,
-        null=True,
-        blank=True
-    )
+    exchange_rate = models.FloatField(null=True, blank=True)
+    estimated_gdp = models.FloatField(null=True, blank=True)
     flag_url = models.URLField(max_length=500, null=True, blank=True)
     last_refreshed_at = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
