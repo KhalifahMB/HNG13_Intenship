@@ -64,6 +64,8 @@ def refresh_countries(request):
                 try:
                     data = fetch_countries_data()
                     rates = fetch_exchange_rates()
+                    print(data)
+                    # print(rates)
                 except ExternalAPIError:
                     # Record failure metadata and exit
                     RefreshMetadata.objects.create(
