@@ -46,7 +46,6 @@ def refresh_countries(request):
     # Start background refresh task and return immediately (202 Accepted)
     try:
         started_at = timezone.now()
-        print("started time", started_at)
 
         # create a metadata entry indicating refresh started
         RefreshMetadata.objects.create(
@@ -64,9 +63,7 @@ def refresh_countries(request):
                 # fetch external data inside background worker so main request never blocks on external APIs
                 try:
                     data = fetch_countries_data()
-                    print("fetching countries", data)
                     rates = fetch_exchange_rates()
-                    print("fetching exchange rates", rates)
                 except ExternalAPIError:
                     # Record failure metadata and exit
                     RefreshMetadata.objects.create(
