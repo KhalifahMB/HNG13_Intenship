@@ -1,13 +1,12 @@
+import logging
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from django.db.models import Q
 from django.utils import timezone
-from django.http import FileResponse, Http404
+from django.http import FileResponse
 import threading
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from decimal import Decimal
 
 from .models import Country, RefreshMetadata
 from .serializers import (
@@ -15,17 +14,12 @@ from .serializers import (
     CountryListSerializer,
     StatusResponseSerializer,
     ErrorResponseSerializer,
-    RefreshResponseSerializer
+    RefreshResponseSerializer,
 )
-from .utils import (
-    fetch_countries_data,
-    fetch_exchange_rates,
-    calculate_estimated_gdp,
-    extract_currency_code,
-    generate_summary_image,
-    get_summary_image_path,
-    ExternalAPIError
-)
+from .utils import get_summary_image_path, ExternalAPIError
+from . import services
+
+logger = logging.getLogger(__name__)
 
 
 @swagger_auto_schema(
@@ -47,159 +41,29 @@ def refresh_countries(request):
     try:
         started_at = timezone.now()
 
-        # create a metadata entry indicating refresh started
-        RefreshMetadata.objects.create(
+        # create a metadata entry indicating refresh started and pass its id to the
+        # background worker so it can update the same record during each stage.
+        metadata = RefreshMetadata.objects.create(
             total_countries=Country.objects.count(),
             last_refreshed_at=started_at,
-            refresh_status='in_progress'
+            refresh_status='in_progress',
         )
 
-        def chunks(iterable, size=100):
-            for i in range(0, len(iterable), size):
-                yield iterable[i:i + size]
-
-        def perform_refresh(timestamp):
-            try:
-                # fetch external data inside background worker so main request never blocks on external APIs
-                try:
-                    data = fetch_countries_data()
-                    rates = fetch_exchange_rates()
-                    print(data)
-                    # print(rates)
-                except ExternalAPIError:
-                    # Record failure metadata and exit
-                    RefreshMetadata.objects.create(
-                        total_countries=Country.objects.count(),
-                        last_refreshed_at=timezone.now(),
-                        refresh_status='failed'
-                    )
-                    return
-
-                batch_size = 100
-
-                # Build a lookup of existing countries by lowercased name
-                existing_qs = Country.objects.all()
-                existing_map = {c.name.lower(): c for c in existing_qs}
-
-                to_create = []
-                to_update = []
-
-                for chunk in chunks(data, batch_size):
-                    to_create.clear()
-                    to_update.clear()
-
-                    for country_data in chunk:
-                        name = (country_data.get('name') or '').strip()
-                        if not name:
-                            continue
-
-                        capital = country_data.get('capital', None)
-                        region = country_data.get('region', None)
-                        population = country_data.get('population', 0)
-                        flag_url = country_data.get('flag', None)
-                        currencies = country_data.get('currencies', [])
-
-                        currency_code = extract_currency_code(currencies)
-
-                        exchange_rate = None
-                        estimated_gdp = None
-
-                        if currency_code:
-                            rate_val = rates.get(currency_code) or rates.get(currency_code.upper())
-                            if rate_val is not None:
-                                try:
-                                    exchange_rate = float(rate_val)
-                                except Exception:
-                                    exchange_rate = None
-                                estimated_gdp = calculate_estimated_gdp(population, exchange_rate)
-
-                        # prepare instance
-                        key = name.lower()
-                        if key in existing_map:
-                            inst = existing_map[key]
-                            inst.capital = capital
-                            inst.region = region
-                            inst.population = population or 0
-                            inst.currency_code = currency_code
-                            inst.exchange_rate = exchange_rate
-                            inst.estimated_gdp = estimated_gdp
-                            inst.flag_url = flag_url
-                            inst.last_refreshed_at = timestamp
-                            to_update.append(inst)
-                        else:
-                            inst = Country(
-                                name=name,
-                                capital=capital,
-                                region=region,
-                                population=population or 0,
-                                currency_code=currency_code,
-                                exchange_rate=exchange_rate,
-                                estimated_gdp=estimated_gdp,
-                                flag_url=flag_url,
-                                last_refreshed_at=timestamp
-                            )
-                            to_create.append(inst)
-
-                    # Bulk create and bulk update for this chunk
-                    if to_create:
-                        Country.objects.bulk_create(to_create, batch_size=len(to_create))
-                        # add newly created instances to existing_map so later chunks can update them if needed
-                        for c in to_create:
-                            existing_map[c.name.lower()] = c
-
-                    if to_update:
-                        Country.objects.bulk_update(
-                            to_update,
-                            ['capital', 'region', 'population', 'currency_code', 'exchange_rate', 'estimated_gdp', 'flag_url', 'last_refreshed_at'],
-                            batch_size=len(to_update)
-                        )
-
-                # Mark refresh success
-                total_countries = Country.objects.count()
-                RefreshMetadata.objects.create(
-                    total_countries=total_countries,
-                    last_refreshed_at=timestamp,
-                    refresh_status='success'
-                )
-
-                # Generate summary image
-                top_5_countries = Country.objects.filter(
-                    estimated_gdp__isnull=False
-                ).order_by('-estimated_gdp')[:5].values('name', 'estimated_gdp')
-
-                generate_summary_image(
-                    total_countries=total_countries,
-                    top_5_countries=list(top_5_countries),
-                    timestamp=timestamp
-                )
-
-            except Exception as exc:
-                # record failure
-                RefreshMetadata.objects.create(
-                    total_countries=Country.objects.count(),
-                    last_refreshed_at=timezone.now(),
-                    refresh_status='failed'
-                )
-
-        # Start background thread
-        thread = threading.Thread(target=perform_refresh, args=(started_at,), daemon=True)
+        # Start background thread that delegates to services.refresh_countries_background
+        thread = threading.Thread(target=services.refresh_countries_background, args=(metadata.id, started_at), daemon=True)
         thread.start()
 
         return Response({
             'message': 'Refresh started',
-            'started_at': started_at.strftime('%Y-%m-%dT%H:%M:%SZ')
-        }, status=status.HTTP_200_OK)
+            'started_at': started_at.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        }, status=status.HTTP_202_ACCEPTED)
 
     except ExternalAPIError as e:
-        return Response({
-            'error': 'External data source unavailable',
-            'details': str(e)
-        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        logger.exception("External API error while starting refresh: %s", e)
+        return Response({'error': 'External data source unavailable', 'details': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     except Exception as e:
-        return Response({
-            'error': 'Internal server error',
-            'details': str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        logger.exception("Unexpected error in refresh_countries view: %s", e)
+        return Response({'error': 'Internal server error', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @swagger_auto_schema(

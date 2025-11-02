@@ -92,7 +92,7 @@ class StatusResponseSerializer(serializers.Serializer):
     Serializer for status endpoint response
     """
     total_countries = serializers.IntegerField()
-    last_refreshed_at = serializers.DateTimeField()
+    last_refreshed_at = serializers.DateTimeField(allow_null=True)
 
 
 class ErrorResponseSerializer(serializers.Serializer):
@@ -100,7 +100,9 @@ class ErrorResponseSerializer(serializers.Serializer):
     Serializer for error responses
     """
     error = serializers.CharField()
-    details = serializers.DictField(required=False)
+    # details can be a string message or a mapping. Keep it permissive for existing
+    # responses.
+    details = serializers.JSONField(required=False)
 
 
 class RefreshResponseSerializer(serializers.Serializer):
@@ -108,5 +110,4 @@ class RefreshResponseSerializer(serializers.Serializer):
     Serializer for refresh endpoint response
     """
     message = serializers.CharField()
-    total_countries = serializers.IntegerField()
-    refreshed_at = serializers.DateTimeField()
+    started_at = serializers.CharField()

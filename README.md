@@ -2,6 +2,38 @@
 **Email:** muhammadelkufahn27@gmail.com
 **Stack:** Python / Django / DRF
 
+# 🧠 EduSimplify Agent
+An AI-powered educational assistant for Telex.im
+Built with Django REST Framework and powered by Google Gemini, this agent simplifies complex science and math concepts into clear, real-world explanations
+
+#### 🚀 Overview
+EduSimplify is a Telex-compatible AI Agent designed to:
+-Explain scientific or mathematical topics in plain English.
+-Provide short real-world examples for each concept.
+-Return structured JSON-RPC 2.0 responses for smooth Telex integration.
+It follows the A2A (Agent-to-Agent) protocol, ensuring plug-and-play compatibility with the Telex.im platform.
+
+## ⚙️ Tech Stack
+| Component       | Description                                         |
+| --------------- | --------------------------------------------------- |
+| **Backend**     | Django + Django REST Framework                      |
+| **AI Model**    | Google Gemini (via `google-generativeai` SDK)       |
+| **Integration** | A2A JSON-RPC 2.0 (Telex-compatible)                 |
+| **Storage**     | Django ORM models (Conversation, Message, Artifact) |
+| **Environment** | `.env` for secure key management                    |
+
+## 🧩 Features
+✅ Follows Telex A2A JSON-RPC 2.0 format
+✅ Uses Gemini for short, factual answers
+✅ Logs all requests & responses for audit/history
+✅ Modular and easy to integrate into any Django project
+✅ Clear serializer-based validation with DRF
+
+
+## Configure your environment
+... other variables
+GEMINI_API_KEY=your_google_gemini_api_key_here
+
 ---
 
 # 🌍 Country Currency & Exchange API
