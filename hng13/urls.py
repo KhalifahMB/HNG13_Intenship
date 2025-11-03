@@ -16,7 +16,7 @@ schema_view = get_schema_view(
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("agent/", include("agent.urls")),
+    path("a2a/agent/", include("EduSimplify.urls")),
     path("", include("profile_app.urls")),
     path("", include("String_Analyser.urls")),
     path("", include("countries_api.urls")),

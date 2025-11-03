@@ -18,7 +18,7 @@ class Conversation(models.Model):
 
 
 class Message(models.Model):
-    message_id = models.CharField(max_length=64, unique=True, default=gen_uuid)
+    message_id = models.CharField(max_length=64, unique=False, default=gen_uuid)
     context = models.ForeignKey(
         Conversation,
         null=True,

@@ -30,11 +30,13 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "whitenoise.runserver_nostatic",
     "django.contrib.staticfiles",
+    
     # Local
     "profile_app",
     "String_Analyser",
     "countries_api",
-    "agent",
+    "EduSimplify",
+    
     # Third-party
     "rest_framework",
     "corsheaders",

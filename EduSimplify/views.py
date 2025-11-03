@@ -10,7 +10,7 @@ from .serializers import (
     ExecuteParamsSerializer,
     A2AMessageSerializer,
 )
-from .utils import ask_gemini
+from .utils import ask_gemini, make_a2a_success, make_a2a_error
 from .models import Conversation, Message, Artifact
 
 
@@ -29,18 +29,10 @@ class A2AAgentView(APIView):
         # Validate top-level JSON-RPC fields
         top_serializer = JSONRPCRequestSerializer(data=raw)
         if not top_serializer.is_valid():
-            return Response(
-                {
-                    "jsonrpc": "2.0",
-                    "id": raw.get("id"),
-                    "error": {
-                        "code": -32600,
-                        "message": "Invalid Request",
-                        "data": top_serializer.errors,
-                    },
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            payload, http_status = make_a2a_error(
+                raw.get("id"), -32600, "Invalid Request", data=top_serializer.errors
             )
+            return Response(payload, status=http_status)
 
         data = top_serializer.validated_data
         request_id = data["id"]
@@ -66,27 +58,13 @@ class A2AAgentView(APIView):
                 task_id = pser.validated_data.get("taskId")
                 messages_list = pser.validated_data.get("messages", [])
             else:
-                return Response(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": request_id,
-                        "error": {"code": -32601, "message": "Method not found"},
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                payload, http_status = make_a2a_error(request_id, -32601, "Method not found")
+                return Response(payload, status=http_status)
         except Exception as e:
-            return Response(
-                {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32602,
-                        "message": "Invalid params",
-                        "data": str(e),
-                    },
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            payload, http_status = make_a2a_error(
+                request_id, -32602, "Invalid params", data=str(e)
             )
+            return Response(payload, status=http_status)
 
         # Extract user text (last message text parts concatenated)
         try:
@@ -109,40 +87,45 @@ class A2AAgentView(APIView):
             last = user_texts[-1]
             user_prompt = last["text"]
         except Exception as exc:
-            return Response(
-                {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32602,
-                        "message": "Invalid message format",
-                        "data": str(exc),
-                    },
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+            payload, http_status = make_a2a_error(
+                request_id, -32602, "Invalid message format", data=str(exc)
             )
+            return Response(payload, status=http_status)
 
         # Persist conversation & incoming message
         conv = None
-        if context_id:
-            conv, _ = Conversation.objects.get_or_create(context_id=context_id)
-        else:
-            conv = Conversation.objects.create()
+        try:
+            if context_id:
+                conv, _ = Conversation.objects.get_or_create(context_id=context_id)
+            else:
+                conv = Conversation.objects.create()
+        except Exception as exc:
+            payload, http_status = make_a2a_error(
+                request_id, -32603, "Database error creating conversation", data=str(exc)
+            )
+            return Response(payload, status=http_status)
 
         # Save incoming user message
-        incoming_msg = Message.objects.create(
-            message_id=last["messageId"],
-            context=conv,
-            role=last["role"],
-            parts=[{"kind": "text", "text": user_prompt}],
-            task_id=last["taskId"],
-        )
+        try:
+            incoming_msg = Message.objects.create(
+                message_id=last["messageId"],
+                context=conv,
+                role=last["role"],
+                parts=[{"kind": "text", "text": user_prompt}],
+                task_id=last["taskId"],
+            )
+        except Exception as exc:
+            payload, http_status = make_a2a_error(
+                request_id, -32603, "Database error saving incoming message", data=str(exc)
+            )
+            return Response(payload, status=http_status)
 
         # Build Gemini prompt
         prompt = (
             "You are EduSimplify — a friendly tutor. Answer concisely.\n\n"
-            "Task: Explain the following concept in 2-3 simple sentences, give one real-world example, "
+            "Task: Explain the following concept in details, give one real-world example, "
             "and a one-line formula or note if applicable.\n\n"
+            "if its requires solution, provide step by step solution."
             f"Concept: {user_prompt}\n\nAnswer:"
         )
 
@@ -150,35 +133,34 @@ class A2AAgentView(APIView):
         try:
             explanation = ask_gemini(prompt)
         except Exception as exc:
-            return Response(
-                {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32603,
-                        "message": "Internal error contacting LLM",
-                        "data": str(exc),
-                    },
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            payload, http_status = make_a2a_error(
+                request_id, -32603, "Internal error contacting LLM", data=str(exc),
             )
+            # map to 500
+            return Response(payload, status=http_status)
 
         # Save agent reply message & artifact
         agent_message_id = gen_uuid()
         agent_task_id = last["taskId"]
-        Message.objects.create(
-            message_id=agent_message_id,
-            context=conv,
-            role="agent",
-            parts=[{"kind": "text", "text": explanation}],
-            task_id=agent_task_id,
-        )
-        artifact = Artifact.objects.create(
-            artifact_id=gen_uuid(),
-            context=conv,
-            name="EduSimplifyResponse",
-            parts=[{"kind": "text", "text": explanation}],
-        )
+        try:
+            Message.objects.create(
+                message_id=agent_message_id,
+                context=conv,
+                role="agent",
+                parts=[{"kind": "text", "text": explanation}],
+                task_id=agent_task_id,
+            )
+            artifact = Artifact.objects.create(
+                artifact_id=gen_uuid(),
+                context=conv,
+                name="EduSimplifyResponse",
+                parts=[{"kind": "text", "text": explanation}],
+            )
+        except Exception as exc:
+            payload, http_status = make_a2a_error(
+                request_id, -32603, "Database error saving agent response", data=str(exc)
+            )
+            return Response(payload, status=http_status)
 
         # Build history (incoming + agent)
         history = [
@@ -223,7 +205,5 @@ class A2AAgentView(APIView):
             "kind": "task",
         }
 
-        return Response(
-            {"jsonrpc": "2.0", "id": request_id, "result": result},
-            status=status.HTTP_200_OK,
-        )
+        payload, http_status = make_a2a_success(request_id, result)
+        return Response(payload, status=http_status)
